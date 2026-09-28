@@ -98,8 +98,8 @@ const MONTH_NAME_PATTERN = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[
 const DAY_NUMBER_PATTERN = /\b\d{1,2}(st|nd|rd|th)?\b/i;
 /** `14-16` denotes a multi-day range, which is not a single calendar date. */
 const DAY_RANGE_PATTERN = /\d\s*[-\u2013\u2014]\s*\d/;
-/** A clock value: 24-hour (`18:00`) or 12-hour with an AM/PM suffix (`6:00 PM`). */
-const CLOCK_PATTERN = /^(\d{1,2})(?::([0-5]\d))?\s*([ap]\.?m\.?)?$/i;
+/** A clock value: 24-hour (`18:00`) or 12-hour with an AM/PM suffix (`6:00 PM`), with an optional trailing zone label (`10:00 AM IST`) that is accepted and ignored — events store wall-clock `HH:mm`. */
+const CLOCK_PATTERN = /^(\d{1,2})(?::([0-5]\d))?\s*([ap]\.?m\.?)?(?:\s+(?:[A-Za-z]{2,5}|UTC?[+-]\d{1,2}(?::?\d{2})?|[+-]\d{2}:?\d{2}))?$/i;
 /** Separates the two ends of a time range: hyphen, en dash or em dash. */
 const RANGE_SEPARATOR_PATTERN = /\s*[-\u2013\u2014]\s*/;
 
@@ -366,7 +366,7 @@ eventSchema.pre("save", function (this: EventDocument) {
     if (canonicalTime === null) {
       issues.push({
         path: "time",
-        message: `time must be a clock value or range, e.g. "18:00" or "9:00 AM - 6:00 PM" (received "${time}").`,
+        message: `time must be a clock value or range, e.g. "18:00" or "9:00 AM - 6:00 PM" (a trailing zone like "IST" is allowed and ignored) (received "${time}").`,
       });
     } else {
       this.time = canonicalTime;

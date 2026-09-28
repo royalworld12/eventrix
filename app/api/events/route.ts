@@ -44,6 +44,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Event created successfully", event: createdEvent }, { status: 201 });
   } catch (error) {
     console.error("Error creating event:", error);
+    // Mongoose validation failures (bad date/time text, empty fields, ...) are the
+    // client's fault: surface the detail with a 400 so the form can show it instead
+    // of the generic 500 below.
+    if (error instanceof Error && error.name === "ValidationError") {
+      return NextResponse.json({ message: error.message }, { status: 400 });
+    }
     return NextResponse.json({ message: "Event creation failed", error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

@@ -5,6 +5,7 @@ export interface IBooking {
   /** Reference to the booked event. */
   eventId: Types.ObjectId;
   email: string;
+  slug: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,6 +27,10 @@ const bookingSchema = new Schema<IBooking>(
       lowercase: true, // "Ada@Example.com" and "ada@example.com" are the same attendee
       match: [EMAIL_PATTERN, "email must be a valid email address."],
     },
+    // Mirrors `IEvent.slug` so a booking can be traced back to the event it was made for.
+    // Mongoose `strict` mode silently drops paths that are absent from the schema, so without this
+    // entry neither the `slug` declared on `IBooking` nor the one the Server Action sends is stored.
+    slug: { type: String, required: true, trim: true, lowercase: true },
   },
   { timestamps: true }, // manages createdAt / updatedAt
 );
