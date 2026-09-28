@@ -11,6 +11,7 @@
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@posthog/nextjs-config": "^1.11.1",
+    "async_hooks": "^1.0.0",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.11.0",
     "cn": "^0.3.0",

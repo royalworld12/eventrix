@@ -5,6 +5,7 @@ import BookEvent from "@/components/BookEvent";
 import { type SerializedEvent } from "@/database/event.model";
 import { getSimiliarEventsBySlug } from "@/lib/actions/events.action";
 import EventCard from "@/components/EventCard";
+import { cacheLife } from "next/cache";
 
 const EventDetailItem = ({ icon, alt, label }: { icon: string; alt: string; label: string }) => {
     return (
@@ -62,6 +63,8 @@ const EventDetailsLoading = () => (
  * a single <Suspense> boundary, which is what Cache Components requires (see the page below).
  */
 const EventDetails = async ({ params }: EventPageProps) => {
+    'use cache'
+    cacheLife('hours')
     const { slug } = await params;
 
     let event;
@@ -148,7 +151,7 @@ const EventDetails = async ({ params }: EventPageProps) => {
                     ) : (   
                         <p className="text-sm">Be the first to book your spot!</p>
                     )}
-                    <BookEvent />
+                    <BookEvent eventId={event._id} slug={event.slug}/>
                 </div>
                 </aside>
             </div>
