@@ -5,8 +5,11 @@
 export {
   EVENT_MODES,
   Event,
+  serializeEvent,
   type EventDocument,
   type EventMode,
   type IEvent,
+  type SerializedEvent,
+  type StoredEvent,
 } from "./event.model";
 export { Booking, type BookingDocument, type IBooking } from "./booking.model";

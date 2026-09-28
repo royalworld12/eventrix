@@ -28,6 +28,68 @@ export interface IEvent {
 
 export type EventDocument = HydratedDocument<IEvent>;
 
+/**
+ * An event as stored in MongoDB, i.e. what Mongoose hands back from a read.
+ *
+ * Hydrated documents (`Event.findOne()`) and `.lean()` results both fit this shape: `_id` is a BSON
+ * `ObjectId` and the timestamps are `Date`s. Neither value can be forwarded to a Client Component
+ * as-is, which is what `serializeEvent` is for.
+ */
+export type StoredEvent = Omit<IEvent, "createdAt" | "updatedAt"> & {
+  _id: { toString(): string };
+  createdAt: Date | string;
+  updatedAt: Date | string;
+};
+
+/**
+ * JSON-safe projection of an event: primitives only.
+ *
+ * `_id` is stored/handed back as an `ObjectId`, which exposes a `toJSON` method. React refuses to
+ * serialise such values when they cross the Server -> Client Component boundary ("Only plain objects
+ * can be passed to Client Components..."), so every read path converts to this shape first. It also
+ * matches the body returned by the JSON API, which keeps a single event type across the server, the
+ * API and the UI.
+ */
+export type SerializedEvent = Omit<IEvent, "createdAt" | "updatedAt"> & {
+  _id: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Normalises a `Date` or date-like string to an ISO 8601 string. */
+function toIsoString(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+/**
+ * Converts a stored event into a `SerializedEvent` (plain strings, no `toJSON`-bearing values).
+ *
+ * Call this on every read path before the data reaches a Client Component or a JSON response body.
+ * Fields are copied one by one on purpose: a spread would also carry over the internal keys Mongoose
+ * attaches to hydrated documents (`_doc`, `$__`, ...), reintroducing the very values React rejects.
+ */
+export function serializeEvent(event: StoredEvent): SerializedEvent {
+  return {
+    _id: String(event._id),
+    title: event.title,
+    slug: event.slug,
+    description: event.description,
+    overview: event.overview,
+    image: event.image,
+    venue: event.venue,
+    location: event.location,
+    date: event.date,
+    time: event.time,
+    mode: event.mode,
+    audience: event.audience,
+    agenda: event.agenda,
+    organizer: event.organizer,
+    tags: event.tags,
+    createdAt: toIsoString(event.createdAt),
+    updatedAt: toIsoString(event.updatedAt),
+  };
+}
+
 /** Canonical ISO calendar date, e.g. `2024-03-15`. */
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** Requires a month name so V8's ambiguous numeric parsing (`03/04/2024`) is never trusted. */
@@ -60,6 +122,72 @@ const REQUIRED_LIST_FIELDS = ["agenda", "tags"] as const satisfies readonly (key
 
 /** A single validation failure, scoped to the path that caused it. */
 type ValidationIssue = { path: keyof IEvent; message: string };
+
+/**
+ * Free-form delivery-mode wording accepted at the boundary, mapped onto the stored enum.
+ *
+ * Clients describe the mode in prose (`"Hybrid (In-Person & Online)"`), while the database keeps a
+ * single canonical word so queries and filters stay cheap. Values with no alias are passed through
+ * untouched (trimmed + lowercased) so the schema `enum` validator still rejects them.
+ */
+const MODE_ALIASES: Record<string, EventMode | undefined> = {
+  online: "online",
+  virtual: "online",
+  remote: "online",
+  webinar: "online",
+  offline: "offline",
+  "in-person": "offline",
+  "in person": "offline",
+  onsite: "offline",
+  "on-site": "offline",
+  hybrid: "hybrid",
+};
+
+/**
+ * Maps a delivery mode onto `EVENT_MODES`: `"Hybrid (In-Person & Online)"` -> `"hybrid"`.
+ *
+ * Used as a schema setter (not a hook) because `save()` validates the document *before* running
+ * `pre("save")` hooks, so the `enum` validator would already have rejected the raw wording.
+ */
+function normaliseMode(value: string): string {
+  const text = value.trim().toLowerCase();
+  if (text === "") return text;
+
+  // The leading word carries the meaning: "Hybrid (In-Person & Online)", "Online only".
+  const [head] = text.split(/[\s(]/);
+  return MODE_ALIASES[head] ?? MODE_ALIASES[text] ?? text;
+}
+
+/**
+ * Normalises a list field (`agenda`, `tags`) that may arrive as a plain string.
+ *
+ * Form bodies (`application/x-www-form-urlencoded`) cannot express arrays, so a serialised JSON
+ * array (`'["Cloud","AI"]'`), a newline separated value, and — for tags — a comma separated value
+ * are all accepted. Anything else is returned unchanged so the schema validators report it.
+ *
+ * `commaSeparated` stays off for `agenda` because agenda entries contain commas themselves
+ * (`"09:45 AM | Deep Dives: Kubernetes, Data Analytics, Security"`).
+ */
+function toList(value: unknown, { commaSeparated }: { commaSeparated: boolean }): unknown {
+  if (Array.isArray(value) || typeof value !== "string") return value;
+
+  const text = value.trim();
+  if (text === "") return [];
+
+  if (text.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Not a JSON array after all: fall through to delimiter splitting.
+    }
+  }
+
+  return text
+    .split(commaSeparated ? /\r?\n|,/ : /\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
 
 /** `"AI Innovation Hackathon!"` -> `"ai-innovation-hackathon"`. */
 function slugify(title: string): string {
@@ -166,11 +294,20 @@ const eventSchema = new Schema<IEvent>(
     location: { type: String, required: true, trim: true },
     date: { type: String, required: true, trim: true },
     time: { type: String, required: true, trim: true },
-    mode: { type: String, required: true, trim: true, lowercase: true, enum: [...EVENT_MODES] },
+    mode: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+      enum: [...EVENT_MODES],
+      // Setters run while the path is cast, i.e. before the `enum` check above.
+      set: normaliseMode,
+    },
     audience: { type: String, required: true, trim: true },
-    agenda: { type: [String], required: true },
+    // `agenda`/`tags` are lists, but form bodies can only send strings (`["a","b"]` or `a\nb`).
+    agenda: { type: [String], required: true, set: (value: unknown) => toList(value, { commaSeparated: false }) },
     organizer: { type: String, required: true, trim: true },
-    tags: { type: [String], required: true },
+    tags: { type: [String], required: true, set: (value: unknown) => toList(value, { commaSeparated: true }) },
   },
   { timestamps: true }, // manages createdAt / updatedAt
 );
